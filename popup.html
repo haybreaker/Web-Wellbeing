@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Web Wellbeing</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+</head>
+<body>
+    <div class="container">
+        <img src="icon.png" alt="App Icon" class="header-icon">
+        <h2>Web Wellbeing - Site Timers</h2>
+        <p id="currentSite" class="current-site">Current site: Loading...</p>
+
+        <div class="progress-container">
+            <div class="progress-text">
+                <span>Time Used</span>
+                <span id="progress">0m</span>
+            </div>
+            <div class="progress-bar">
+                <div id="progressBar" class="progress-fill"></div>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <button id="minus" class="control-button">−15m</button>
+            <span id="timer" class="timer-display">No limit set</span>
+            <button id="plus" class="control-button">+15m</button>
+        </div>
+
+        <div class="control-group single-button">
+            <button id="clear" class="control-button">Clear Limit</button>
+        </div>
+
+        <div id="extendContainer">
+            <div class="extends-info">
+                <span id="extendsInfo" class="extends-text">Extensions used: 0/5</span>
+            </div>
+            <div class="control-group single-button">
+                <button id="extendTemp" class="control-button">Add 1 Minute</button>
+            </div>
+        </div>
+
+        <div class="sub-rules-section">
+            <div class="sub-rules-header">
+                <h3>Fine-Tune Rules</h3>
+                <button id="addRule" class="control-button">New Rule</button>
+            </div>
+            <div id="rulesContainer" class="rules-container"></div>
+        </div>
+
+        <div id="errorMessage" class="error-message">
+            <span class="material-icons">warning</span>
+            <div>Time limit reached. Focus mode active.</div>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
