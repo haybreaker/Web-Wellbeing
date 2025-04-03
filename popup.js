@@ -166,6 +166,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Rule creation handler
     document.getElementById('addRule').addEventListener('click', async () => {
         const siteData = await SiteDataManager.getSiteData(hostname);
+        siteData.rules = siteData.rules || [];
         const newRules = [...siteData.rules, { pattern: '', action: 'allow' }];
         await SiteDataManager.updateSiteData(hostname, { rules: newRules });
         UIManager.renderRules(hostname, newRules);

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Web Wellbeing - Site Timers",
-  "version": "0.1",
+  "version": "0.2",
   "description": "Limits time on websites per day.",
-  "permissions": ["storage", "scripting", "activeTab", "tabs"],
+  "permissions": ["storage", "scripting", "activeTab", "tabs", "webNavigation", "idle"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
@@ -19,5 +19,10 @@
       "resources": ["icon.png"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
 }
