@@ -1,6 +1,6 @@
 let activeTimers = new Map();
 let lastActivity = new Map();
-let currentActiveTabId = null;
+let lastUpdateTimestamps = new Map();
 
 const getTodayDateString = () => {
     const today = new Date();
@@ -22,31 +22,29 @@ const normalizeUrl = (url) => {
 };
 
 const isMediaPlaying = async (tabId) => {
-    try {
-        const results = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: () => {
-                const mediaElements = [];
-                const collectMedia = (window) => {
-                    mediaElements.push(...window.document.querySelectorAll('video, audio'));
-                    Array.from(window.frames).forEach(iframe => {
-                        try {
-                            collectMedia(iframe);
-                        } catch (e) {}
-                    });
-                };
-                collectMedia(window);
-                return mediaElements.some(media => 
-                    !media.paused && !media.ended && media.currentTime > 0
-                );
-            },
-            args: [],
-            allFrames: true
-        });
-        return results.some(r => r.result);
-    } catch {
-        return false;
-    }
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        const mediaElements = document.querySelectorAll('video, audio');
+        const isPlaying = Array.from(mediaElements).some(media => 
+          !media.paused && !media.ended && media.currentTime > 0
+        );
+        
+        let ytPlaying = false;
+        if (window.location.hostname.includes('youtube.com')) {
+          const ytPlayer = document.querySelector('#movie_player');
+          ytPlaying = ytPlayer && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 1;
+        }
+        
+        return isPlaying || ytPlaying;
+      }
+    });
+    
+    return results.some(r => r.result === true);
+  } catch (e) {
+    return false;
+  }
 };
 
 class RuleMatcher {
@@ -79,8 +77,8 @@ const isValidTab = async (tabId) => {
     }
 };
 
-const updateBadge = async (hostname, siteData, fullPath) => {
-    if (!hostname) return;
+const updateBadge = async (hostname, siteData, fullPath, tabId) => {
+    if (!hostname || !tabId) return;
 
     const matchedRule = RuleMatcher.matchRule(fullPath, siteData.rules);
     const displayTime = matchedRule?.action === 'limit' ? 
@@ -92,14 +90,18 @@ const updateBadge = async (hostname, siteData, fullPath) => {
         siteData.limit + (siteData.extendsToday * 60);
 
     const mins = Math.floor(displayTime / 60);
-    const badgeText = mins > 0 ? `${mins}m` : '';
+    const badgeText = mins > 0 ? `${mins}m` : '0m';
 
-    chrome.action.setBadgeText({ text: badgeText });
+    chrome.action.setBadgeText({ 
+        text: badgeText,
+        tabId: tabId
+    });
     
     const progress = effectiveLimit ? Math.min(1, displayTime / effectiveLimit) : 0;
     chrome.action.setBadgeBackgroundColor({
         color: progress < 0.5 ? "#34A853" :
-               progress < 0.85 ? "#FBBC04" : "#EA4335"
+               progress < 0.85 ? "#FBBC04" : "#EA4335",
+        tabId: tabId 
     });
 };
 
@@ -109,7 +111,7 @@ const blockPage = async (tabId) => {
         await chrome.scripting.executeScript({
             target: { tabId },
             func: () => {
-                document.body.innerHTML = `
+                document.body.outerHTML = `
                     <div style="
                         display: flex;
                         flex-direction: column;
@@ -132,9 +134,7 @@ const blockPage = async (tabId) => {
                 `;
             }
         });
-    } catch (error) {
-        console.debug('Block page failed:', error);
-    }
+    } catch (error) {}
 };
 
 const clearExistingTimer = (tabId) => {
@@ -142,14 +142,19 @@ const clearExistingTimer = (tabId) => {
         clearInterval(activeTimers.get(tabId));
         activeTimers.delete(tabId);
     }
+    lastUpdateTimestamps.delete(tabId);
 };
 
 const handleTimerTick = async (tabId, hostname, fullPath, matchedRule) => {
     if (!(await isValidTab(tabId))) return false;
 
+    const now = Date.now();
     const lastActive = lastActivity.get(tabId) || 0;
-    const isInactive = Date.now() - lastActive > 60000;
-    const mediaPlaying = await isMediaPlaying(tabId);
+    const isInactive = now - lastActive > 60000;
+    const mediaPlaying = await Promise.race([
+      isMediaPlaying(tabId),
+      new Promise(resolve => setTimeout(() => resolve(false), 300)) 
+    ]);
 
     if (isInactive && !mediaPlaying) return false;
 
@@ -172,11 +177,7 @@ const handleTimerTick = async (tabId, hostname, fullPath, matchedRule) => {
     }
 
     await chrome.storage.local.set({ [hostname]: currentSiteData });
-    
-    // Only update badge if this is the currently active tab
-    if (tabId === currentActiveTabId) {
-        await updateBadge(hostname, currentSiteData, fullPath);
-    }
+    await updateBadge(hostname, currentSiteData, fullPath, tabId);
     
     return false;
 };
@@ -188,7 +189,7 @@ const handleTabChange = async (tabId) => {
 
     const tab = await chrome.tabs.get(tabId);
     if (!tab.url?.startsWith('http')) {
-        chrome.action.setBadgeText({ text: '' });
+        chrome.action.setBadgeText({ text: '', tabId });
         return;
     }
 
@@ -221,35 +222,47 @@ const handleTabChange = async (tabId) => {
         return;
     }
 
+    await updateBadge(hostname, siteData, fullPath, tabId);
     if (matchedRule?.action === "allow") return;
 
+    lastUpdateTimestamps.set(tabId, Date.now());
     const timerId = setInterval(async () => {
         if (await handleTimerTick(tabId, hostname, fullPath, matchedRule)) {
-            clearInterval(timerId);
-            activeTimers.delete(tabId);
+            clearExistingTimer(tabId);
         }
     }, 1000);
 
     activeTimers.set(tabId, timerId);
 };
 
-// Activity tracking system
 const updateActivity = (tabId) => {
     lastActivity.set(tabId, Date.now());
 };
 
-// Track active tab changes
-const updateActiveTab = (tabId) => {
-    currentActiveTabId = tabId;
-    if (tabId) {
-        updateActivity(tabId);
-        handleTabChange(tabId);
+const updateActiveTab = async (tabId) => {
+    try {
+        const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+        const focusedWindow = windows.find(w => w.focused);
+        if (!focusedWindow) return;
+
+        const [activeTab] = await chrome.tabs.query({ active: true, windowId: focusedWindow.id });
+        if (activeTab?.id === tabId) {
+            await handleTabChange(tabId);
+        }
+    } catch (err) {
+        console.error("updateActiveTab failed", err);
     }
 };
 
-// Listeners
 chrome.tabs.onActivated.addListener((activeInfo) => {
     updateActiveTab(activeInfo.tabId);
+});
+
+chrome.webNavigation.onCommitted.addListener((details) => {
+    updateActivity(details.tabId);
+    chrome.tabs.get(details.tabId).then(tab => {
+        if (tab.active) updateActiveTab(details.tabId);
+    });
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
@@ -263,38 +276,42 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === "complete") {
-        updateActivity(tabId);
         chrome.tabs.get(tabId).then(tab => {
             if (tab.active) updateActiveTab(tabId);
         });
     }
 });
 
-chrome.webNavigation.onCommitted.addListener((details) => {
-    updateActivity(details.tabId);
-});
-
 chrome.tabs.onRemoved.addListener((tabId) => {
     clearExistingTimer(tabId);
     lastActivity.delete(tabId);
-    if (tabId === currentActiveTabId) currentActiveTabId = null;
 });
 
-// System event handlers
+chrome.windows.onRemoved.addListener((windowId) => {
+    chrome.tabs.query({ windowId }, (tabs) => {
+        tabs.forEach(tab => clearExistingTimer(tab.id));
+    });
+});
+
 chrome.runtime.onStartup.addListener(() => {
     activeTimers.forEach((timerId) => clearInterval(timerId));
     activeTimers.clear();
     lastActivity.clear();
-    currentActiveTabId = null;
+    lastUpdateTimestamps.clear();
 });
 
-chrome.idle.setDetectionInterval(60);
-chrome.idle.onStateChanged.addListener((state) => {
-    if (state === "active") {
-        chrome.tabs.query({ active: true }, (tabs) => {
-            tabs.forEach(tab => {
-                if (tab.id) updateActivity(tab.id);
-            });
+chrome.runtime.onInstalled.addListener(() => {
+    chrome.tabs.query({}, (tabs) => {
+        tabs.forEach(tab => {
+            if (tab.active && tab.windowId) {
+                updateActiveTab(tab.id);
+            }
         });
-    }
+    });
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type === 'userActivity' && sender.tab?.id) {
+    lastActivity.set(sender.tab.id, Date.now());
+  }
 });
