@@ -1,15 +1,21 @@
 const activityEvents = ['mousedown', 'scroll', 'contextmenu'];
-const port = chrome.runtime.connect({"name": "content-script"});
-const portDead = false;
+let port;
 
-const handleActivity = () => {
-  if(!portDead) chrome.runtime.sendMessage({ type: 'userActivity' });
+const withSafeRuntime = (fn) => {
+  try { fn() } catch { cleanup() }
 };
 
-activityEvents.forEach(event => {
-  document.addEventListener(event, handleActivity, { passive: true });
+const cleanup = () => {
+  activityEvents.forEach(e => document.removeEventListener(e, handleActivity));
+  port?.disconnect();
+};
+
+const handleActivity = () => withSafeRuntime(() => {
+  chrome.runtime.sendMessage({ type: 'userActivity' });
 });
 
-port.onDisconnect.addListener(function() {
-    portDead = true;
-})
+withSafeRuntime(() => {
+  port = chrome.runtime.connect({ name: "content-script" });
+  port.onDisconnect.addListener(cleanup);
+  activityEvents.forEach(e => document.addEventListener(e, handleActivity, { passive: true }));
+});
