@@ -52,9 +52,11 @@ class UIManager {
             siteData.limit + (siteData.extendsToday * 60) : null;
         
         const displayTime = siteData.timeSpent;
-        const minutesUsed = Math.floor(displayTime / 60);
+        const mins = displayTime % 60;
+        const hours = Math.floor(displayTime / 60);
+        const progressText = hours > 0 ? `${hours}h${mins}m` : `${mins}m`;
         
-        document.getElementById('progress').textContent = `${minutesUsed}m`;
+        document.getElementById('progress').textContent = progressText;
         document.getElementById('timer').textContent = effectiveLimit ?
             `${Math.floor(effectiveLimit / 60)}m` :
             'No limit set';
