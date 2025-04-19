@@ -51,9 +51,9 @@ class UIManager {
         const effectiveLimit = siteData.limit !== null ? 
             siteData.limit + (siteData.extendsToday * 60) : null;
         
-        const displayTime = siteData.timeSpent;
-        const mins = displayTime % 60;
-        const hours = Math.floor(displayTime / 60);
+        const secondsSpent = siteData.timeSpent;
+        const mins = Math.floor(secondsSpent / 60);
+        const hours = Math.floor(mins / 60);
         const progressText = hours > 0 ? `${hours}h${mins}m` : `${mins}m`;
         
         document.getElementById('progress').textContent = progressText;
@@ -66,7 +66,7 @@ class UIManager {
 
         const progressBar = document.getElementById('progressBar');
         if (effectiveLimit) {
-            const percentage = Math.min(100, (displayTime / effectiveLimit) * 100);
+            const percentage = Math.min(100, (secondsSpent / effectiveLimit) * 100);
             progressBar.style.width = `${percentage}%`;
             progressBar.style.backgroundColor = 
                 percentage < 50 ? '#34A853' :

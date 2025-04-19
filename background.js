@@ -1,7 +1,11 @@
 let activeTimers = new Map();
 let lastActivity = new Map();
 
-const getTodayDateString = () => new Date().toISOString().split('T')[0];
+const getTodayDateString = () => {
+    const today = new Date();
+    today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+    return today.toISOString().split('T')[0];
+};
 
 const normalizeUrl = (url) => {
     try {
@@ -57,7 +61,10 @@ const updateBadge = async (hostname, siteData, fullPath, tabId) => {
         const limit = matchedRule?.limit ?? (siteData.limit + (siteData.extendsToday || 0) * 60);
 
         let badgeText = '';
-        if (time > 0) badgeText = `${Math.floor(time/60)}h${time%60}m`.replace('0h','');
+        if (time > 0) {
+            const totalMinutes = Math.floor(time / 60);
+            badgeText = `${Math.floor(totalMinutes / 60)}h${totalMinutes % 60}m`.replace('0h','');
+        }
         await chrome.action.setBadgeText({ text: badgeText, tabId });
         await chrome.action.setBadgeBackgroundColor({ 
             color: limit ? time >= limit ? '#EA4335' : time >= limit*0.85 ? '#FBBC04' : '#34A853' : '#808080', 
@@ -69,17 +76,46 @@ const updateBadge = async (hostname, siteData, fullPath, tabId) => {
 const blockPage = async (tabId) => {
     try {
         await chrome.scripting.executeScript({
-            tabId,
+            target: {tabId},
             func: () => {
-                document.body.innerHTML = `
-                    <div style="text-align:center;padding:20px;font-family:sans-serif">
-                        <h2>Time Limit Reached</h2>
-                        <p>You've exceeded your allocated time for this website.</p>
-                    </div>`;
-                window.stop();
+                document.body.outerHTML = `
+                    <div style="
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100vh;
+                        width: 100vw;
+                        padding: 24px;
+                        text-align: center;
+                        background: #F8F9FA;
+                    ">
+                        <img style="margin-bottom: 8px" src="${chrome.runtime.getURL("icon.png")}" height="80" /> 
+                        <h2 style="font-size: 24px; color: #1A73E8; margin-bottom: 16px;">
+                            Time Limit Reached
+                        </h2>
+                        <p style="font-size: 18px; color: #5F6368;">
+                            You've exceeded your allocated time for this website
+                        </p>
+                    </div>
+                `;
             }
         });
     } catch {}
+};
+
+const checkTimeLimit = async (hostname, fullPath, tabId) => {
+    const storageData = await chrome.storage.local.get(hostname);
+    const siteData = storageData[hostname] || { timeSpent: 0, subRules: {} };
+    const matchedRule = RuleMatcher.matchRule(fullPath, siteData.rules);
+    const effectiveLimit = matchedRule?.limit ?? (siteData.limit + (siteData.extendsToday || 0) * 60);
+    const time = matchedRule?.action === 'limit' && fullPath ? siteData.subRules?.[fullPath] || 0 : siteData.timeSpent || 0;
+
+    if (effectiveLimit && time >= effectiveLimit) {
+        await blockPage(tabId);
+        return true;
+    }
+    return false;
 };
 
 const handleTimerTick = async (tabId) => {
@@ -97,19 +133,17 @@ const handleTimerTick = async (tabId) => {
         const siteData = storageData[timerData.hostname] || { timeSpent: 0, subRules: {} };
         if (siteData.lastReset !== getTodayDateString()) Object.assign(siteData, { timeSpent:0, subRules:{}, extendsToday:0, lastReset: getTodayDateString() });
 
-        const timeToAdd = 1;
+        const timeToAdd = 60;
         if (timerData.matchedRule?.action === 'limit' && timerData.fullPath) {
             siteData.subRules[timerData.fullPath] = (siteData.subRules[timerData.fullPath] || 0) + timeToAdd;
         } else {
             siteData.timeSpent = (siteData.timeSpent || 0) + timeToAdd;
         }
 
-        const effectiveLimit = timerData.matchedRule?.limit ?? (siteData.limit + (siteData.extendsToday || 0) * 60);
         await chrome.storage.local.set({ [timerData.hostname]: siteData });
         await updateBadge(timerData.hostname, siteData, timerData.fullPath, tabId);
 
-        if (effectiveLimit && (siteData.timeSpent >= effectiveLimit || siteData.subRules[timerData.fullPath] >= effectiveLimit)) {
-            await blockPage(tabId);
+        if (await checkTimeLimit(timerData.hostname, timerData.fullPath, tabId)) {
             clearTimerForTab(tabId);
         }
     } catch { clearTimerForTab(tabId); }
@@ -133,6 +167,8 @@ const updateAndManageTimers = async () => {
         if (matchedRule?.action === 'block') return blockPage(tab.id);
         if (matchedRule?.action === 'allow') return clearTimerForTab(tab.id);
 
+        if (await checkTimeLimit(hostname, fullPath, tab.id)) continue;
+
         if (!activeTimers.has(tab.id)) {
             activeTimers.set(tab.id, { 
                 timerId: setInterval(() => handleTimerTick(tab.id), 60000),
@@ -146,7 +182,6 @@ const updateAndManageTimers = async () => {
     }
 };
 
-// Event Listeners
 chrome.tabs.onActivated.addListener(updateAndManageTimers);
 chrome.windows.onFocusChanged.addListener(updateAndManageTimers);
 chrome.tabs.onUpdated.addListener((_, info, tab) => (info.url || info.status === 'complete') && updateAndManageTimers());
@@ -154,7 +189,6 @@ chrome.tabs.onRemoved.addListener(tabId => { activeTimers.delete(tabId); lastAct
 chrome.webNavigation.onCommitted.addListener(details => details.frameId === 0 && updateAndManageTimers());
 chrome.runtime.onMessage.addListener((msg, sender) => msg.type === 'userActivity' && lastActivity.set(sender.tab.id, Date.now()));
 
-// Initialization
 chrome.runtime.onStartup.addListener(updateAndManageTimers);
 chrome.runtime.onInstalled.addListener(updateAndManageTimers);
 updateAndManageTimers();
