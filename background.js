@@ -12,7 +12,7 @@ const normalizeUrl = (url) => {
         if (!url?.startsWith('http')) return { hostname: null, fullPath: null };
         const parsed = new URL(url);
         if (parsed.protocol === 'chrome:') return { hostname: null, fullPath: null };
-        return { hostname: parsed.hostname, fullPath: parsed.hostname + parsed.pathname };
+        return { hostname: parsed.hostname, fullPath: parsed.hostname + parsed.pathname, path: parsed.pathname };
     } catch { return { hostname: null, fullPath: null }; }
 };
 
@@ -34,9 +34,9 @@ class RuleMatcher {
         return rules?.find(rule => {
             try {
                 const pattern = rule.pattern?.trim();
-                const parsed = new URL(fullUrl, 'http://example.com');
-                if (pattern?.startsWith('/')) return parsed.pathname.startsWith(pattern);
-                if (pattern?.startsWith('.')) return parsed.hostname.endsWith(pattern.slice(1));
+                const { hostname, path } = normalizeUrl(`https://${fullUrl}`);
+                if (pattern?.startsWith('/')) return path.startsWith(pattern);
+                if (pattern?.startsWith('.')) return hostname.endsWith(pattern.slice(1));
             } catch { return false; }
         });
     }
